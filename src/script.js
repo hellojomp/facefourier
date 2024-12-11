@@ -1,4 +1,10 @@
 import Potrace from 'potrace';
+import { getPathLengthLookup, getPathLengthFromD, getPathDataLength, getLength, parsePathDataNormalized } from "svg-getpointatlength"
+import { ifftPath, generateCircleCenters } from './fourierTransform';
+
+
+let globalCounter = 1;
+let freqs = [];
 
 document.addEventListener('DOMContentLoaded', () => {
     const fileInput = document.getElementById('fileInput');
@@ -10,11 +16,11 @@ document.addEventListener('DOMContentLoaded', () => {
         return new Promise((resolve, reject) => {
             const tempCanvas = document.createElement('canvas');
             const tempCtx = tempCanvas.getContext('2d');
-            tempCanvas.width = img.width;
-            tempCanvas.height = img.height;
-            tempCtx.drawImage(img, 0, 0, 400, 400);
+            tempCanvas.width = canvas.width;
+            tempCanvas.height = canvas.height;
+            tempCtx.drawImage(img, 0, 0);
 
-            const imageData = tempCtx.getImageData(0, 0, 400, 400);
+            const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
             console.log('starting to run potrace');
             
             Potrace.trace(imageData, (err, svg) => {
@@ -69,35 +75,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return connectedPath.trim();
     }
 
-    // Function to animate path traversal
-    function animatePath(path, img, translateX, translateY) {
-        const pathLength = path.getTotalLength();
-        const points = [];
-        for (let i = 0; i <= pathLength; i += 1) {
-            points.push(path.getPointAtLength(i));
-        }
-
-        let currentPoint = 0;
-        function draw() {
-            ctx.fillStyle = 'black';
-            ctx.fillRect(points[currentPoint].x + translateX, points[currentPoint].y + translateY, 2, 2);
-            currentPoint++;
-
-            if (currentPoint < points.length) {
-                requestAnimationFrame(draw);
-            } else {
-                // Draw original image in black and white
-                ctx.globalCompositeOperation = 'source-atop';
-                ctx.filter = 'grayscale(100%)';
-                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                ctx.globalCompositeOperation = 'source-over';
-                ctx.filter = 'none';
-            }
-        }
-
-        requestAnimationFrame(draw);
-    }
-
     fileInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (file && file.type.startsWith('image/')) {
@@ -105,45 +82,55 @@ document.addEventListener('DOMContentLoaded', () => {
             reader.onload = (event) => {
                 const img = new Image();
                 img.onload = async () => {
-                    canvas.width = window.innerWidth;
-                    canvas.height = window.innerHeight;
+                    // Set canvas size to 90% of the smaller viewport dimension
+                    const size = Math.min(window.innerWidth, window.innerHeight) * 0.9;
+                    canvas.width = size;
+                    canvas.height = size;
                     canvas.style.display = 'block';
-    
+
                     try {
-                        // Convert image to SVG
-                        const svg = await imageToSVG(img);
-    
+                        // Calculate scaling to fit image in canvas while maintaining aspect ratio
+                        const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+                        const scaledWidth = img.width * scale;
+                        const scaledHeight = img.height * scale;
+
+                        // Calculate position to center the image in the canvas
+                        const translateX = (canvas.width - scaledWidth) / 2;
+                        const translateY = (canvas.height - scaledHeight) / 2;
+
+                        // Create a temporary canvas for the scaled image
+                        const tempCanvas = document.createElement('canvas');
+                        tempCanvas.width = canvas.width;
+                        tempCanvas.height = canvas.height;
+                        const tempCtx = tempCanvas.getContext('2d');
+                        tempCtx.translate(canvas.width/2,canvas.height/2);
+                        // Draw the scaled image on the temporary canvas
+                        tempCtx.drawImage(img, -scaledWidth/2, -scaledHeight/2, scaledWidth, scaledHeight);
+
+                        // Convert scaled image to SVG
+                        const svg = await imageToSVG(tempCanvas);
                         console.log('SVG path connecting started');
                         // Connect SVG paths
                         const connectedPath = connectSVGPaths(svg);
                         console.log('SVG path connecting finished');
-    
-                        // Create SVG path element
                         const svgElement = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
                         svgElement.setAttribute('width', canvas.width);
                         svgElement.setAttribute('height', canvas.height);
+
+                        // add stroke width if you want it to be seen
+                        console.log(connectedPath)
                         const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
                         pathElement.setAttribute('d', connectedPath);
-    
-                        // Calculate scale to fit the image within the canvas
-                        console.log(canvas.width, canvas.height, img.width, img.height);
-                        const scaleX = canvas.width / img.width;
-                        const scaleY = canvas.height / img.height;
-                        const scale = 1
-    
-                        // Calculate translation to center the image
-                        const translateX = (canvas.width - img.width * scale) / 2;
-                        const translateY = (canvas.height - img.height * scale) / 2;
-    
-                        // Apply transformation to center and scale the image
-                        // pathElement.setAttribute('transform', `translate(${translateX}, ${translateY}) scale(${scale})`);
                         svgElement.appendChild(pathElement);
-    
+                        console.log(svgElement);
+                        console.log('pathElement created');
+
                         // Clear the canvas
                         ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
+                        console.log('begin animating path');
                         // Animate path traversal
-                        animatePath(pathElement, img, translateX, translateY);
+                        animatePath(connectedPath, tempCanvas, translateX, translateY);
                     } catch (error) {
                         console.error('Error processing image:', error);
                         alert('Error processing image. Please try another image.');
@@ -156,13 +143,128 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('Please select a valid image file.');
         }
     });
+
+    // Update the imageToSVG function to accept a canvas instead of an image
+    function imageToSVG(canvas) {
+        return new Promise((resolve, reject) => {
+            const imageData = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+            console.log('starting to run potrace');
+
+            Potrace.trace(imageData, (err, svg) => {
+                if (err) {
+                    console.error('Potrace error:', err);
+                    reject(err);
+                    return;
+                }
+                console.log('potrace to SVG started');
+                resolve(svg);
+                console.log('potrace to SVG finished');
+            });
+        });
+    }
+
+    // Update the animatePath function to use the canvas dimensions
+    function animatePath(path, canvas, translateX, translateY) {
+        console.log('starting to animate path traversal');
+        let pathLengthLookup = getPathLengthLookup(path);
+        let totalLength = pathLengthLookup.totalLength;
     
-    // Resize canvas when window is resized
-    window.addEventListener('resize', () => {
-        if (canvas.style.display === 'block') {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            // Re-draw the image here if needed
+        console.log('total length of connected path:', totalLength);
+    
+        console.log('path length:', totalLength);
+        const points = [];
+
+        let MAX_NUMBER_OF_POINTS = 3000;
+        let incremebt = totalLength > 2 * MAX_NUMBER_OF_POINTS ? Math.floor(totalLength / MAX_NUMBER_OF_POINTS) : 1;
+        for (let i = 0; i <= totalLength; i += incremebt) {
+            points.push(pathLengthLookup.getPointAtLength(i));
+        }
+
+        console.log(points);
+        let freqs = ifftPath(points);
+        console.log('number of points:', freqs.length);
+        
+        ctx.lineWidth = 1;
+        let iteration = 0;
+
+        console.log('First point on path: ', points.slice(0, 10));
+        console.log('First point on ifft: ', freqs.slice(0, 10));
+
+
+        globalCounter = freqs.length - 1;
+        let tracedPoints = [];
+        function draw() {
+
+            let newFreqs = generateCircleCenters(freqs, iteration);
+
+            tracedPoints.push(newFreqs[globalCounter]);
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            let nextX;
+            let nextY;
+
+            ctx.beginPath();
+
+            // for (let i = 1; i < iteration - 1; i++) {
+            //     ctx.moveTo(points[i-1].x + translateX, points[i-1].y + translateY);
+            //     ctx.lineTo(points[i].x + translateX, points[i].y + translateY);
+            // }
+
+            for (let i = 1; i < iteration; i++) {
+                ctx.moveTo(tracedPoints[i-1][0] + translateX, tracedPoints[i-1][1] + translateY);
+                ctx.lineTo(tracedPoints[i][0] + translateX, tracedPoints[i][1] + translateY);
+            }
+
+            for (let j = 0; j < globalCounter; j++) {
+                if (j < newFreqs.length - 1) {
+                    nextX = newFreqs[j + 1][0];
+                    nextY = newFreqs[j + 1][1];
+                } else {
+                    nextX = newFreqs[j][0];
+                    nextY = newFreqs[j][1];
+                }
+
+                const center = newFreqs[j];
+                let r = Math.sqrt((nextX - center[0]) ** 2 + (nextY - center[1]) ** 2);
+                if (j < newFreqs.length - 1) {
+                    ctx.moveTo(center[0] + translateX, center[1] + translateY);
+                    ctx.lineTo(nextX + translateX, nextY + translateY);
+                    // ctx.fillRect(center[0] + translateX, center[1] + translateY, 2, 2);
+                    ctx.moveTo(center[0] + translateX + r, center[1] + translateY);
+                    ctx.arc(center[0] + translateX, center[1] + translateY, r, 0, 2 * Math.PI);
+                }
+            }
+            ctx.closePath();
+            ctx.stroke();
+
+            iteration += 1;
+            if (iteration < freqs.length) {
+                requestAnimationFrame(draw);
+            } else {
+                // Draw original image in black and white
+                ctx.globalCompositeOperation = 'source-atop';
+                ctx.filter = 'grayscale(100%)';
+                ctx.drawImage(canvas, 0, 0);
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.filter = 'none';
+            }
+        }
+    
+        requestAnimationFrame(draw);
+    }
+
+    canvas.addEventListener("click", (e) => {
+        if (e.detail === 2) {
+            if (globalCounter > 0) {
+                globalCounter--
+            }
+            console.log(globalCounter);
+        } else if (e.detail === 1) {
+            if (globalCounter < freqs.length - 1) {
+                globalCounter++
+            }
+            console.log(globalCounter);
         }
     });
 });
