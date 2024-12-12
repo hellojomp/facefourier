@@ -1,8 +1,8 @@
 import Potrace from 'potrace';
-import { getPathLengthLookup, getPathLengthFromD, getPathDataLength, getLength, parsePathDataNormalized } from "svg-getpointatlength"
+import { getPathLengthLookup } from "svg-getpointatlength"
 import { ifftPath, generateCircleCenters } from './fourierTransform';
 
-
+let MAX_NUMBER_OF_POINTS = 3000;
 let globalCounter = 1;
 let freqs = [];
 
@@ -21,7 +21,6 @@ document.addEventListener('DOMContentLoaded', () => {
             tempCtx.drawImage(img, 0, 0);
 
             const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-            console.log('starting to run potrace');
             
             Potrace.trace(imageData, (err, svg) => {
                 if (err) {
@@ -29,9 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     reject(err);
                     return;
                 }
-                console.log('potrace to SVG started');
                 resolve(svg);
-                console.log('potrace to SVG finished');
 
             });
         });
@@ -88,6 +85,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     canvas.height = size;
                     canvas.style.display = 'block';
 
+                    document.getElementById("upload-container").style.display = 'none';
+
                     try {
                         // Calculate scaling to fit image in canvas while maintaining aspect ratio
                         const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
@@ -109,31 +108,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
                         // Convert scaled image to SVG
                         const svg = await imageToSVG(tempCanvas);
-                        console.log('SVG path connecting started');
                         // Connect SVG paths
                         const connectedPath = connectSVGPaths(svg);
-                        console.log('SVG path connecting finished');
                         const svgElement = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                        svgElement.setAttribute('style', `position: absolute; background-color: #fff; opacity: 0.1; transform: translate(${translateX}px, ${translateY}px)`);
                         svgElement.setAttribute('width', canvas.width);
                         svgElement.setAttribute('height', canvas.height);
+                        svgElement.setAttribute('stroke', 'black');
+                        svgElement.setAttribute('fill', 'none');
+
 
                         // add stroke width if you want it to be seen
-                        console.log(connectedPath)
                         const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
                         pathElement.setAttribute('d', connectedPath);
                         svgElement.appendChild(pathElement);
-                        console.log(svgElement);
-                        console.log('pathElement created');
 
+                        document.body.appendChild(svgElement);
                         // Clear the canvas
                         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-                        console.log('begin animating path');
                         // Animate path traversal
                         animatePath(connectedPath, tempCanvas, translateX, translateY);
                     } catch (error) {
                         console.error('Error processing image:', error);
                         alert('Error processing image. Please try another image.');
+                        document.getElementById("upload-container").style.display = 'block';
+
                     }
                 };
                 img.src = event.target.result;
@@ -148,7 +148,6 @@ document.addEventListener('DOMContentLoaded', () => {
     function imageToSVG(canvas) {
         return new Promise((resolve, reject) => {
             const imageData = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
-            console.log('starting to run potrace');
 
             Potrace.trace(imageData, (err, svg) => {
                 if (err) {
@@ -156,41 +155,26 @@ document.addEventListener('DOMContentLoaded', () => {
                     reject(err);
                     return;
                 }
-                console.log('potrace to SVG started');
                 resolve(svg);
-                console.log('potrace to SVG finished');
             });
         });
     }
 
     // Update the animatePath function to use the canvas dimensions
     function animatePath(path, canvas, translateX, translateY) {
-        console.log('starting to animate path traversal');
         let pathLengthLookup = getPathLengthLookup(path);
         let totalLength = pathLengthLookup.totalLength;
     
-        console.log('total length of connected path:', totalLength);
-    
-        console.log('path length:', totalLength);
         const points = [];
-
-        let MAX_NUMBER_OF_POINTS = 3000;
         let incremebt = totalLength > 2 * MAX_NUMBER_OF_POINTS ? Math.floor(totalLength / MAX_NUMBER_OF_POINTS) : 1;
         for (let i = 0; i <= totalLength; i += incremebt) {
             points.push(pathLengthLookup.getPointAtLength(i));
         }
 
-        console.log(points);
         let freqs = ifftPath(points);
-        console.log('number of points:', freqs.length);
         
         ctx.lineWidth = 1;
         let iteration = 0;
-
-        console.log('First point on path: ', points.slice(0, 10));
-        console.log('First point on ifft: ', freqs.slice(0, 10));
-
-
         globalCounter = freqs.length - 1;
         let tracedPoints = [];
         function draw() {
@@ -206,11 +190,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             ctx.beginPath();
 
-            // for (let i = 1; i < iteration - 1; i++) {
-            //     ctx.moveTo(points[i-1].x + translateX, points[i-1].y + translateY);
-            //     ctx.lineTo(points[i].x + translateX, points[i].y + translateY);
-            // }
-
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = 'black';
             for (let i = 1; i < iteration; i++) {
                 ctx.moveTo(tracedPoints[i-1][0] + translateX, tracedPoints[i-1][1] + translateY);
                 ctx.lineTo(tracedPoints[i][0] + translateX, tracedPoints[i][1] + translateY);
@@ -259,12 +240,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (globalCounter > 0) {
                 globalCounter--
             }
-            console.log(globalCounter);
         } else if (e.detail === 1) {
             if (globalCounter < freqs.length - 1) {
                 globalCounter++
             }
-            console.log(globalCounter);
         }
     });
 });

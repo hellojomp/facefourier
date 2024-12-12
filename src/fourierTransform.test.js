@@ -30,8 +30,6 @@ describe('IFFT function', () => {
       
       const result = ifft(real, imag);
   
-      console.log(result);
-
   
       // Check if the result matches the expected output
       expect(result.length).toBe(8);
