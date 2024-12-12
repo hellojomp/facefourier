@@ -1,6 +1,12 @@
 const path = require('path');
+const TerserPlugin = require('terser-webpack-plugin');
 
 module.exports = {
+  devtool: 'source-map', // or 'hidden-source-map' for production
+  optimization: {
+    minimizer: [new TerserPlugin()],
+  },
+  mode: 'production',
   entry: './src/script.js',
   output: {
     filename: 'bundle.js',
@@ -14,11 +20,15 @@ module.exports = {
         use: {
           loader: 'babel-loader',
           options: {
-            presets: ['@babel/preset-env']
+            cacheDirectory: true,
           }
         }
       }
     ]
   },
-  mode: 'development'
+  resolve: {
+    fallback: {
+      "buffer": require.resolve("buffer/")
+    }
+  }
 };
